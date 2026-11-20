@@ -105,6 +105,7 @@ export function getSceneLifecycle(
     fps,
     config: SPRING_PRESETS.hero,
   });
+  const enterFactor = Math.min(1, enterSpring);
 
   const exitStart = safeDur - exitFrames;
   const exitFactor =
@@ -112,7 +113,7 @@ export function getSceneLifecycle(
       ? clampedRange(frame, exitStart, safeDur - 1, 1, 0, EASE_WHIP)
       : 1;
 
-  const masterOpacity = Math.min(1, enterSpring) * exitFactor;
+  const masterOpacity = enterFactor * exitFactor;
   const tSec = frame / fps;
   const breath = Math.sin(tSec * Math.PI * 0.85);
 
@@ -120,6 +121,7 @@ export function getSceneLifecycle(
     progress,
     tSec,
     enterSpring,
+    enterFactor,
     exitFactor,
     masterOpacity,
     breath,
@@ -192,13 +194,115 @@ export function accentAt(
   return best;
 }
 
-/** Mix two hex colours (ink -> accent) by t in [0,1]; use with accentAt().strength. */
+function parseColorRgba(color: string): [number, number, number, number] {
+  const trimmed = color.trim();
+  const rgbaMatch = trimmed.match(
+    /^rgba?\(\s*(\d+(?:\.\d+)?)\s*[,\s]\s*(\d+(?:\.\d+)?)\s*[,\s]\s*(\d+(?:\.\d+)?)(?:\s*[,/]\s*(\d+(?:\.\d+)?%?))?\s*\)$/i,
+  );
+  if (rgbaMatch) {
+    const r = Math.max(0, Math.min(255, Number(rgbaMatch[1]))) / 255;
+    const g = Math.max(0, Math.min(255, Number(rgbaMatch[2]))) / 255;
+    const b = Math.max(0, Math.min(255, Number(rgbaMatch[3]))) / 255;
+    let a = 1;
+    if (rgbaMatch[4] !== undefined) {
+      const rawA = rgbaMatch[4].endsWith('%')
+        ? parseFloat(rgbaMatch[4]) / 100
+        : parseFloat(rgbaMatch[4]);
+      a = Number.isFinite(rawA) ? Math.max(0, Math.min(1, rawA)) : 1;
+    }
+    return [r, g, b, a];
+  }
+
+  const hexMatch = trimmed.match(/^#?([0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+  if (!hexMatch) {
+    return [0, 0, 0, 1];
+  }
+  const clean = hexMatch[1];
+  const full =
+    clean.length === 3 || clean.length === 4
+      ? clean
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : clean;
+  const r = parseInt(full.slice(0, 2), 16) / 255;
+  const g = parseInt(full.slice(2, 4), 16) / 255;
+  const b = parseInt(full.slice(4, 6), 16) / 255;
+  const a = full.length === 8 ? parseInt(full.slice(6, 8), 16) / 255 : 1;
+  return [r, g, b, a];
+}
+
+function formatRgbOrRgba(r: number, g: number, b: number, a: number): string {
+  const ri = Math.round(Math.max(0, Math.min(1, r)) * 255);
+  const gi = Math.round(Math.max(0, Math.min(1, g)) * 255);
+  const bi = Math.round(Math.max(0, Math.min(1, b)) * 255);
+  const ac = Math.max(0, Math.min(1, a));
+  if (ac >= 0.999) {
+    return `#${[ri, gi, bi].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+  }
+  return `rgba(${ri}, ${gi}, ${bi}, ${Number(ac.toFixed(3))})`;
+}
+
+function srgbToLinear(c: number): number {
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function linearToSrgb(c: number): number {
+  const clamped = Math.max(0, Math.min(1, c));
+  return clamped <= 0.0031308 ? 12.92 * clamped : 1.055 * Math.pow(clamped, 1 / 2.4) - 0.055;
+}
+
+function rgbToOklab(r: number, g: number, b: number): [number, number, number] {
+  const lr = srgbToLinear(r);
+  const lg = srgbToLinear(g);
+  const lb = srgbToLinear(b);
+  const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+  const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+  const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ];
+}
+
+function oklabToRgb(L: number, a: number, b: number): [number, number, number] {
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+  const l = l_ * l_ * l_;
+  const m = m_ * m_ * m_;
+  const s = s_ * s_ * s_;
+  return [
+    linearToSrgb(+4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+  ];
+}
+
+/**
+ * Perceptually smooth OKLab color interpolation (ink -> vermilion stays crisp without muddy sRGB midpoints).
+ * Accepts #RGB, #RRGGBB, #RRGGBBAA, rgb(...), or rgba(...) (including DARK_NIGHT_THEME translucent tokens).
+ * Returns #rrggbb when opaque and rgba(...) when alpha < 1; use with accentAt().strength.
+ */
 export function mixHex(from: string, to: string, t: number): string {
-  const p = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
-  const a = p(from);
-  const b = p(to);
-  const k = Math.max(0, Math.min(1, t));
-  return `#${a.map((v, i) => Math.round(v + (b[i] - v) * k).toString(16).padStart(2, '0')).join('')}`;
+  const k = Number.isFinite(t) ? Math.max(0, Math.min(1, t)) : 0;
+  const [r1, g1, b1, a1] = parseColorRgba(from);
+  if (k <= 0) {
+    return formatRgbOrRgba(r1, g1, b1, a1);
+  }
+  const [r2, g2, b2, a2] = parseColorRgba(to);
+  if (k >= 1) {
+    return formatRgbOrRgba(r2, g2, b2, a2);
+  }
+  const lab1 = rgbToOklab(r1, g1, b1);
+  const lab2 = rgbToOklab(r2, g2, b2);
+  const [r, g, b] = oklabToRgb(
+    lab1[0] + (lab2[0] - lab1[0]) * k,
+    lab1[1] + (lab2[1] - lab1[1]) * k,
+    lab1[2] + (lab2[2] - lab1[2]) * k,
+  );
+  return formatRgbOrRgba(r, g, b, a1 + (a2 - a1) * k);
 }
 
 export interface CameraKey {
@@ -238,7 +342,9 @@ export function cameraAt(
   const cx = a.cx + (b.cx - a.cx) * t;
   const cy = a.cy + (b.cy - a.cy) * t;
   // interpolate zoom in log space so 1 -> 4 feels as even as 1 -> 2 -> 4
-  const zoom = Math.exp(Math.log(a.zoom) + (Math.log(b.zoom) - Math.log(a.zoom)) * t);
+  const zA = Math.max(1e-3, a.zoom);
+  const zB = Math.max(1e-3, b.zoom);
+  const zoom = Math.exp(Math.log(zA) + (Math.log(zB) - Math.log(zA)) * t);
   const w = viewW / zoom;
   const h = viewH / zoom;
   return `${cx - w / 2} ${cy - h / 2} ${w} ${h}`;
@@ -273,6 +379,7 @@ export function inkJitter(points: Array<[number, number]>, amplitude: number = 1
 export function taperStroke(points: Array<[number, number]>, maxWidth: number = 6, taper: number = 0.18): string {
   const n = points.length;
   if (n < 2) return '';
+  const safeTaper = Math.max(1e-4, Math.min(0.5, taper));
   const left: string[] = [];
   const right: string[] = [];
   for (let i = 0; i < n; i++) {
@@ -285,7 +392,7 @@ export function taperStroke(points: Array<[number, number]>, maxWidth: number = 
     dx /= len;
     dy /= len;
     const u = i / (n - 1);
-    const shape = Math.min(1, u / taper, (1 - u) / taper);
+    const shape = Math.min(1, u / safeTaper, (1 - u) / safeTaper);
     const hw = (maxWidth / 2) * Math.sin((Math.max(0, shape) * Math.PI) / 2);
     left.push(`${(x - dy * hw).toFixed(2)} ${(y + dx * hw).toFixed(2)}`);
     right.push(`${(x + dy * hw).toFixed(2)} ${(y - dx * hw).toFixed(2)}`);
@@ -350,4 +457,171 @@ export function swissGrid(
     },
     baselineY: (row: number, step: number = 24) => safe.top + row * step,
   };
+}
+
+/**
+ * Time-based choreography stagger (default 0.09s cascade step, 0.42s glide).
+ * Keeps entrances hierarchical instead of popping every element simultaneously.
+ */
+export function staggerAt(
+  tSec: number,
+  index: number,
+  baseSec: number = 0.08,
+  stepSec: number = 0.09,
+  durSec: number = 0.42,
+  easing: (t: number) => number = EASE_GLIDE,
+): number {
+  const start = baseSec + Math.max(0, index) * stepSec;
+  return clampedRange(tSec, start, start + Math.max(0.05, durSec), 0, 1, easing);
+}
+
+/**
+ * Crisp Swiss paper-mask wipe CSS clipPath value for HTML overlay containers.
+ * Inside SVG `<g>` stages (e.g. SceneFrameShell children), prefer `wipeRect()` or `<SvgWipe>`
+ * using native SVG `<clipPath><rect /></clipPath>` in explicit user-space coordinates.
+ */
+export function wipeInset(
+  progress: number,
+  direction: 'left' | 'right' | 'up' | 'down' = 'right',
+): string {
+  const rem = (1 - Math.max(0, Math.min(1, progress))) * 100;
+  const pct = `${rem.toFixed(2)}%`;
+  switch (direction) {
+    case 'right':
+      return `inset(0 ${pct} 0 0)`;
+    case 'left':
+      return `inset(0 0 0 ${pct})`;
+    case 'down':
+      return `inset(0 0 ${pct} 0)`;
+    case 'up':
+      return `inset(${pct} 0 0 0)`;
+  }
+}
+
+export interface SvgRectBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Native SVG user-space `<clipPath><rect /></clipPath>` wipe geometry.
+ * 100% deterministic inside `<svg>` stages at both 1K (`--scale=1`) and 4K (`--scale=2`),
+ * avoiding Chromium CSS `clip-path: inset(...)` objectBoundingBox quirks on `<g>` elements.
+ */
+export function wipeRect(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  progress: number,
+  direction: 'right' | 'left' | 'down' | 'up' = 'right',
+): SvgRectBox {
+  const p = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : 0;
+  const safeW = Math.max(0, width);
+  const safeH = Math.max(0, height);
+  switch (direction) {
+    case 'right':
+      return {x, y, width: safeW * p, height: safeH};
+    case 'left':
+      return {x: x + safeW * (1 - p), y, width: safeW * p, height: safeH};
+    case 'down':
+      return {x, y, width: safeW, height: safeH * p};
+    case 'up':
+      return {x, y: y + safeH * (1 - p), width: safeW, height: safeH * p};
+  }
+}
+
+/**
+ * Strictly clamped, eased numeric counter supporting cross-scene continuation.
+ * Pass the previous scene's terminal value in `from` so metrics never reset to 0 across cuts.
+ */
+export function countTo(
+  tSec: number,
+  startSec: number,
+  durSec: number,
+  from: number,
+  to: number,
+  decimals: number = 0,
+  easing: (t: number) => number = EASE_GLIDE,
+): number {
+  const p = clampedRange(tSec, startSec, startSec + Math.max(0.05, durSec), 0, 1, easing);
+  const raw = from + (to - from) * p;
+  if (decimals <= 0) {
+    const rounded = Math.round(raw);
+    return rounded === 0 ? 0 : rounded;
+  }
+  const factor = Math.pow(10, decimals);
+  const rounded = Math.round(raw * factor) / factor;
+  return rounded === 0 ? 0 : rounded;
+}
+
+/**
+ * Compute top Y inside `safe` that anchors a visual block around the optical center
+ * (default bias 0.47 = slightly above geometric midpoint, eliminating bottom dead voids).
+ */
+export function opticalCenterY(
+  contentHeight: number,
+  safe: {top: number; height: number},
+  bias: number = 0.47,
+): number {
+  const clampedBias = Math.max(0.2, Math.min(0.8, bias));
+  const free = Math.max(0, safe.height - contentHeight);
+  return Math.round(safe.top + free * clampedBias);
+}
+
+/**
+ * Anchor a visual block cleanly above the bottom edge of `safe` (right above the portrait 54px subtitle rail)
+ * so graphic + subtitle read as ONE visual unit and negative space consolidates into a single clean block above.
+ */
+export function bottomAnchorY(
+  contentHeight: number,
+  safe: {top: number; height: number},
+  bottomPad: number = 28,
+): number {
+  const pad = Math.max(0, bottomPad);
+  const target = safe.top + safe.height - contentHeight - pad;
+  return Math.round(Math.max(safe.top, target));
+}
+
+export interface TextScriptRun {
+  text: string;
+  isLatin: boolean;
+}
+
+/**
+ * Split mixed CJK + Latin strings into script runs so serif typography can apply `letter-spacing: 0`
+ * strictly to Latin/number runs (preventing "S k i l l" drift when CJK tracking is non-zero).
+ */
+export function splitLatinRuns(text: string): TextScriptRun[] {
+  const spaced = panguSpace(text);
+  const runs: TextScriptRun[] = [];
+  const re = /([A-Za-z0-9][A-Za-z0-9._:/+-]*|\/[a-z][a-z0-9-]*)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(spaced)) !== null) {
+    if (m.index > last) {
+      runs.push({text: spaced.slice(last, m.index), isLatin: false});
+    }
+    runs.push({text: m[0], isLatin: true});
+    last = m.index + m[0].length;
+  }
+  if (last < spaced.length) {
+    runs.push({text: spaced.slice(last), isLatin: false});
+  }
+  return runs;
+}
+
+/**
+ * Insert delicate optical thin spaces (U+2009) at CJK <-> ASCII alphanumeric / lowercase slash-command /
+ * currency / percent / signed-number or signed-currency boundaries ("盘古之白") so mixed headlines like
+ * "月收$12,400", "省下-$100美元", "直降-25%成本", "用/boost多智能体", and "1个Skill解决" breathe cleanly
+ * while keeping "$12,400/月" and "效率/ROI" intact. Idempotent.
+ */
+export function panguSpace(text: string): string {
+  const THIN = '\u2009';
+  return text
+    .replace(/([\u3400-\u9fff])([A-Za-z0-9$¥€£]|[+-](?=[$¥€£]?\d)|\/(?=[a-z]))/g, `$1${THIN}$2`)
+    .replace(/([A-Za-z0-9%])([\u3400-\u9fff])/g, `$1${THIN}$2`);
 }

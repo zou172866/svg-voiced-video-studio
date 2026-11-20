@@ -1,4 +1,4 @@
 interface:
-  display_name: "svg-voiced-video-studio（60帧有声SVG视频工作坊）"
-  short_description: "生成本地音色配音的60帧原生SVG动态视频、四尺寸防裁切封面与五平台发布文案包"
-  default_prompt: "使用 $svg-voiced-video-studio 完成本地配音、60fps 原生 SVG 动态视频、四尺寸封面与五平台文案制作，并逐项校验音画与防遮挡结果。"
+  display_name: "svg-voiced-video-studio（4K 60帧有声SVG视频工作坊）"
+  short_description: "生成本地音色配音的 4K 60fps 原生SVG动态视频、四尺寸防裁切封面与五平台纯文字文案包"
+  default_prompt: "使用 $svg-voiced-video-studio 按信息点动态分幕，完成本地双轨配音、4K 60fps 原生 SVG 动态视频、四尺寸封面与五平台纯文字文案制作，并逐项校验音画与防遮挡结果。"

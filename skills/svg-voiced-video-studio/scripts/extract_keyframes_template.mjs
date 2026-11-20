@@ -1,13 +1,21 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import {bundle} from '@remotion/bundler';
-import {renderStill, selectComposition, openBrowser} from '@remotion/renderer';
+import {createRequire} from 'node:module';
+import {pathToFileURL} from 'node:url';
 
 const projectDir = path.resolve(process.argv[2] || '.');
 const mainCompositionId = process.argv[3] || 'MainEssay';
 const includeMid = process.argv.includes('--with-mid');
 // Default to 18123 so Windows Hyper-V/WinNAT TCP port exclusions (2308-3207) never trigger 'No available ports found'
 const SAFE_PORT = Number(process.env.REMOTION_PORT || 18123);
+
+// Resolve Remotion packages from projectDir/node_modules so this script runs cleanly both when invoked
+// directly from the skill's scripts/ directory and when copied inside a Remotion project.
+const projectRequire = createRequire(path.join(projectDir, 'package.json'));
+const {bundle} = await import(pathToFileURL(projectRequire.resolve('@remotion/bundler')).href);
+const {renderStill, selectComposition, openBrowser} = await import(
+  pathToFileURL(projectRequire.resolve('@remotion/renderer')).href
+);
 
 const outDir = path.join(projectDir, 'out', 'keyframes');
 fs.mkdirSync(outDir, {recursive: true});

@@ -539,11 +539,11 @@ def build_sfx_bus(
     preset_name: str,
 ) -> tuple[np.ndarray, list[dict]]:
     """
-    Build speech-aware editorial SFX bus aligned to scenesData.json timestamps:
-    - Scene/chapter cuts get J-cut whoosh (0.04s early, crest aligned via peak_offset_sec).
-    - Key numbers / emphasis get sparse tick or pause-placed pop/chime.
+    Build speech-aware paper-and-ink editorial foley bus aligned to scenesData.json timestamps (v6):
+    - Scene/chapter cuts get J-cut page_turn (0.04s early, crest aligned via peak_offset_sec).
+    - Key numbers / emphasis get sparse ledger_tick + pause-placed ruler_drop / pen_stroke / stamp_thud.
     - Non-cut cues avoid the first 80ms of spoken lines and duck -6 dB whenever overlapping speech.
-    - 'impact' is capped at <= 2 across the entire film and placed strictly in pauses.
+    - 'stamp_thud' (alias 'impact') is capped at <= 2 across the entire film and placed strictly in pauses.
     """
     total_n = len(voice_master)
     bus = np.zeros(total_n, dtype=np.float32)
@@ -569,7 +569,7 @@ def build_sfx_bus(
 
         for c in explicit:
             at = c.get("at", "cut")
-            kind = c.get("kind", "pop")
+            kind = c.get("kind", "ruler_drop")
             gain = float(c.get("gain", 0.30))
             t_hit = s0 if at == "cut" else (s_end - 0.35 if at == "end" else s0 + float(at) if isinstance(at, (int, float)) else s0)
             if isinstance(at, str) and at.startswith("emphasis:"):
@@ -582,16 +582,16 @@ def build_sfx_bus(
         if sfx_mode != "auto":
             continue
 
-        # Auto cues: clean J-cut whoosh on cuts (all cuts in short mode, chapter shifts in long mode)
+        # Auto cues: clean J-cut page_turn on cuts (all cuts in short mode, chapter shifts in long mode)
         if idx >= 1 and sc_in.get("density") != "empty":
             prev_ch = scenes_out[idx - 1].get("chapterLabel")
             if preset_name == "short" or sc_out.get("chapterLabel") != prev_ch:
                 raw_cues.append({
                     "timeSec": max(0.05, s0 - 0.04),
-                    "kind": "whoosh",
-                    "gain": 0.24 if preset_name == "short" else 0.16,
+                    "kind": "page_turn",
+                    "gain": 0.28 if preset_name == "short" else 0.18,
                     "isCut": True,
-                    "reason": f"{sc_out['id']} J-cut transition",
+                    "reason": f"{sc_out['id']} J-cut page_turn",
                 })
 
         # Auto emphasis / numeric payoff placed cleanly in post-line pause (never stepping on spoken syllables)
@@ -602,51 +602,50 @@ def build_sfx_bus(
                 if not ems or placed_scene_accent:
                     continue
                 em0 = ems[0]
-                has_num = bool(re.search(r"[\d$¥%％万亿]", em0["word"]))
+                has_num = bool(re.search(r"[\d$¥%％万亿十百千]", em0["word"]))
                 pause_anchor = s0 + float(ln["endSec"]) + 0.04
                 if has_num:
-                    # 3 subtle ledger ticks leading into the number, then a clean pop/chime in the pause after the line
                     em_abs = s0 + float(em0["startSec"])
                     for ti in range(3):
                         raw_cues.append({
                             "timeSec": max(0.02, em_abs - (3 - ti) * 0.11),
-                            "kind": "tick",
+                            "kind": "ledger_tick",
                             "gain": 0.14,
                             "isCut": False,
                             "reason": f"{sc_out['id']} number count-in ({em0['word']})",
                         })
                     raw_cues.append({
                         "timeSec": pause_anchor,
-                        "kind": "chime" if idx == len(scenes_out) - 1 else "pop",
-                        "gain": 0.24,
+                        "kind": "stamp_thud" if idx in (1, len(scenes_out) - 1) else "ruler_drop",
+                        "gain": 0.28 if idx in (1, len(scenes_out) - 1) else 0.22,
                         "isCut": False,
-                        "reason": f"{sc_out['id']} post-number pause ({em0['word']})",
+                        "reason": f"{sc_out['id']} post-number foley ({em0['word']})",
                     })
                 else:
                     raw_cues.append({
                         "timeSec": pause_anchor,
-                        "kind": "pop",
-                        "gain": 0.18,
+                        "kind": "pen_stroke" if idx == 0 else "ruler_drop",
+                        "gain": 0.20,
                         "isCut": False,
-                        "reason": f"{sc_out['id']} post-keyword pause ({em0['word']})",
+                        "reason": f"{sc_out['id']} post-keyword foley ({em0['word']})",
                     })
                 placed_scene_accent = True
         elif idx == max(0, len(scenes_out) - 2) and sc_out["lines"]:
-            # Mode A/B long essay: single contemplative chime after penultimate thesis scene
+            # Mode A/B long essay: single tactile pen_stroke after penultimate thesis scene
             ln_last = sc_out["lines"][-1]
             raw_cues.append({
                 "timeSec": s0 + float(ln_last["endSec"]) + 0.08,
-                "kind": "chime",
+                "kind": "pen_stroke",
                 "gain": 0.18,
                 "isCut": False,
-                "reason": f"{sc_out['id']} thesis payoff chime",
+                "reason": f"{sc_out['id']} thesis payoff pen_stroke",
             })
 
     applied: list[dict] = []
     impact_count = 0
     for idx_c, cue in enumerate(sorted(raw_cues, key=lambda x: x["timeSec"])):
         kind = cue["kind"]
-        if kind == "impact":
+        if kind in ("impact", "stamp_thud"):
             if impact_count >= 2:
                 continue
             impact_count += 1

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Programmatic final-video technical QA & review-sheet generator for svg-voiced-video-studio.
+Programmatic final-video technical & motion-dynamics QA generator for svg-voiced-video-studio (v6).
 
 Hard PASS / FAIL checks (exit code 1 on any FAIL):
   1. Video stream decodable, non-zero frames
@@ -10,19 +10,16 @@ Hard PASS / FAIL checks (exit code 1 on any FAIL):
   4. Packet/frame count matches duration * fps (within +-2 frames) and --scenes-json / --expect-duration
   5. Stereo audio stream present, EBU R128 integrated loudness within -14.0 +- 1.5 LUFS, true peak <= -1.0 dBTP
   6. Zero accidental pure-black dropout frames (pix_th=0.02 so Mode A #111110 charcoal canvas is not false-flagged)
+  7. Motion dynamics (v6, when --scenes-json supplied): samples content band at 10fps to compute per-scene
+     frame-diff & structural ink displacement curves; verifies every non-holdStill scene has at least 1 genuine
+     primary kinetic gesture (pan / wipe / bar growth / stroke draw / split / stamp) and is not a flat PPT fade.
 
 Unchecked spec rule:
   Omitting --expect-size, --expect-fps, or (--scenes-json / --expect-duration) marks that item NOT_CHECKED
   and exits with code 2 (never claims "ALL PASSED" on partial checks).
 
-Review cues & visual sheets (written to --out-dir, default <video_dir>/qa):
-  - qa_report.json : Full structured technical & motion diagnostics
-  - qa_sheet.png   : 24-cell contact sheet across the full duration
-  - qa_phone.png   : 12-cell mobile-feed thumbnail sheet (180px cell width for 9:16, 320px for 16:9)
-  - Freeze classification against scenesData.json intentional pauses/tails & flash-frame spike detection
-
 Usage:
-  python scripts/inspect_video.py out/final.mp4 --expect-size 1080x1920 --expect-fps 60 --scenes-json src/data/scenesData.json
+  python scripts/inspect_video.py out/sample_1080p.mp4 --expect-size 1080x1920 --expect-fps 60 --scenes-json src/data/scenesData.json
 """
 from __future__ import annotations
 
@@ -34,6 +31,8 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import numpy as np
 
 
 def resolve_bin(name: str, ffmpeg_dir: str | None) -> str:
@@ -160,18 +159,179 @@ def detect_visual_anomalies(video_path: Path, dur: float, fps: float, ffmpeg_bin
         if mt:
             cuts.append(round(float(mt.group(1)), 3))
 
-    # Single/two-frame flash spike: two high scene-score jumps within <= 3 frames
     max_gap = 3.2 / max(1.0, fps)
     flashes = [cuts[i] for i in range(len(cuts) - 1) if (cuts[i + 1] - cuts[i]) <= max_gap]
     return {"black_segments": blacks, "freeze_segments": freezes, "scene_cuts": cuts, "flash_spikes_sec": flashes}
 
 
-def load_intended_holds(scenes_json: Path | None) -> tuple[float | None, int | None, list[tuple[float, float]]]:
+def analyse_motion_dynamics(
+    video_path: Path,
+    media: dict,
+    scenes: list[dict],
+    ffmpeg_bin: str,
+    sample_fps: int = 10,
+) -> dict:
+    """
+    Sample the content band at 10fps via rawvideo grayscale pipe and compute per-scene:
+    - frame-diff curve (active_motion_sec, distinct motion burst peaks)
+    - structural spatial travel (ink bounding-box extent + centroid travel + area growth)
+    Distinguishes real kinetic gestures (pan / wipe / grow / split / strike / stamp) from flat PPT slides.
+    """
+    w_src, h_src = media["width"], media["height"]
+    is_portrait = h_src > w_src
+    if is_portrait:
+        cx, cy = int(w_src * 48 / 1080), int(h_src * 266 / 1920)
+        cw, ch = int(w_src * 892 / 1080), int(h_src * 1064 / 1920)
+        sw, sh = 144, 180
+    else:
+        cx, cy = 0, int(h_src * 140 / 1080)
+        cw, ch = int(w_src * 0.96), int(h_src * 0.63)
+        sw, sh = 200, 112
+
+    vf = f"fps={sample_fps},crop={cw}:{ch}:{cx}:{cy},scale={sw}:{sh}:flags=bilinear,format=gray"
+    r = subprocess.run(
+        [
+            ffmpeg_bin,
+            "-hide_banner",
+            "-v",
+            "error",
+            "-i",
+            str(video_path),
+            "-vf",
+            vf,
+            "-an",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "-",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if r.returncode != 0 or not r.stdout:
+        return {"status": "FAIL", "error": "ffmpeg 抽样帧差流失败", "scenes": []}
+
+    frame_bytes = sw * sh
+    n_frames = len(r.stdout) // frame_bytes
+    if n_frames < 5:
+        return {"status": "FAIL", "error": "抽样帧数不足", "scenes": []}
+
+    arr = np.frombuffer(r.stdout[: n_frames * frame_bytes], dtype=np.uint8).reshape(n_frames, sh, sw).astype(np.float32)
+
+    # Estimate paper/canvas background luma from image corners across film
+    corners = np.concatenate(
+        [arr[:, :6, :6].reshape(-1), arr[:, :6, -6:].reshape(-1), arr[:, -6:, -6:].reshape(-1)]
+    )
+    bg_luma = float(np.median(corners))
+
+    scene_reports: list[dict] = []
+    failed_scenes: list[str] = []
+    weak_scenes: list[str] = []
+
+    for sc in scenes:
+        sid = str(sc.get("id", "S??"))
+        fps_sc = float(sc.get("fps", 60))
+        s0 = float(sc.get("startSec", 0.0))
+        dur_sc = float(sc.get("durationInFrames", 0)) / max(1.0, fps_sc)
+        if sc.get("holdStill") or dur_sc < 1.8:
+            scene_reports.append({"id": sid, "duration_sec": round(dur_sc, 2), "status": "INTENDED_HOLD"})
+            continue
+
+        # Trim 0.20s at scene boundaries so the scene cut itself does not mimic internal motion
+        i0 = max(0, min(n_frames - 2, int(round((s0 + 0.15) * sample_fps))))
+        i1 = max(i0 + 2, min(n_frames, int(round((s0 + dur_sc - 0.15) * sample_fps))))
+        seg = arr[i0:i1]
+        if len(seg) < 4:
+            scene_reports.append({"id": sid, "duration_sec": round(dur_sc, 2), "status": "INTENDED_HOLD"})
+            continue
+
+        diffs = np.mean(np.abs(np.diff(seg, axis=0)), axis=(1, 2)) / 255.0
+        active_mask = diffs > 0.0010
+        active_sec = float(np.sum(active_mask)) / float(sample_fps)
+        max_diff = float(np.max(diffs))
+
+        # Count distinct kinetic bursts (contiguous active windows >= 2 frames)
+        peaks = 0
+        run = 0
+        for flag in active_mask:
+            if flag:
+                run += 1
+            else:
+                if run >= 2:
+                    peaks += 1
+                run = 0
+        if run >= 2:
+            peaks += 1
+
+        # Measure structural spatial change (ink bounding-box extent + centroid travel + area growth)
+        ink = np.abs(seg - bg_luma) > 22.0
+        areas = np.mean(ink, axis=(1, 2))
+        extents: list[tuple[float, float, float, float]] = []
+        for k in range(len(ink)):
+            ys_k, xs_k = np.where(ink[k])
+            if len(ys_k) >= 8:
+                extents.append(
+                    (
+                        float(np.mean(xs_k)) / sw,
+                        float(np.mean(ys_k)) / sh,
+                        float(np.max(xs_k) - np.min(xs_k)) / sw,
+                        float(np.max(ys_k) - np.min(ys_k)) / sh,
+                    )
+                )
+        if len(extents) >= 2:
+            ext_arr = np.array(extents, dtype=np.float32)
+            # Total dynamic span across the scene (max - min) in normalized coordinates
+            spatial_span = float(
+                np.ptp(ext_arr[:, 0]) + np.ptp(ext_arr[:, 1]) + np.ptp(ext_arr[:, 2]) + np.ptp(ext_arr[:, 3])
+            )
+            area_growth = float(np.max(areas) - np.min(areas))
+        else:
+            spatial_span = 0.0
+            area_growth = 0.0
+
+        # A genuine primary kinetic gesture moves/grows/wipes space meaningfully (not a frozen slide)
+        has_primary_gesture = (peaks >= 1 and active_sec >= 0.40 and (spatial_span >= 0.22 or area_growth >= 0.035))
+        is_opacity_suspect = (peaks >= 1 and spatial_span < 0.14 and area_growth < 0.020)
+
+        if not has_primary_gesture:
+            st = "FAIL_NO_PRIMARY_MOTION"
+            failed_scenes.append(sid)
+        elif is_opacity_suspect:
+            st = "WARN_OPACITY_ONLY_SUSPECT"
+            weak_scenes.append(sid)
+        else:
+            st = "PASS"
+
+        scene_reports.append(
+            {
+                "id": sid,
+                "duration_sec": round(dur_sc, 2),
+                "active_motion_sec": round(active_sec, 2),
+                "motion_peaks": peaks,
+                "max_frame_diff": round(max_diff, 5),
+                "spatial_span": round(spatial_span, 3),
+                "area_growth": round(area_growth, 4),
+                "status": st,
+            }
+        )
+
+    overall_st = "FAIL" if failed_scenes else "PASS"
+    return {
+        "status": overall_st,
+        "sample_fps": sample_fps,
+        "failed_scenes": failed_scenes,
+        "weak_motion_scenes": weak_scenes,
+        "scenes": scene_reports,
+    }
+
+
+def load_scenes_meta(scenes_json: Path | None) -> tuple[float | None, int | None, list[tuple[float, float]], list[dict]]:
     if not scenes_json or not scenes_json.is_file():
-        return None, None, []
+        return None, None, [], []
     scenes = json.loads(scenes_json.read_text(encoding="utf-8-sig"))
     if not scenes:
-        return None, None, []
+        return None, None, [], []
     fps = float(scenes[0].get("fps", 60))
     total_frames = sum(int(s.get("durationInFrames", 0)) for s in scenes)
     holds: list[tuple[float, float]] = []
@@ -189,10 +349,9 @@ def load_intended_holds(scenes_json: Path | None) -> tuple[float | None, int | N
             le = float(ln.get("endSec", 0.0))
             if p >= 0.6:
                 holds.append((s0 + le, s0 + le + p))
-        # Static Swiss layout holds: scenes explicitly marked holdStill
         if s.get("holdStill"):
             holds.append((s0, s0 + dur))
-    return round(total_frames / fps, 4), total_frames, holds
+    return round(total_frames / fps, 4), total_frames, holds, scenes
 
 
 def render_contact_sheet(video_path: Path, dur: float, cells: int, cell_w: int, out_png: Path, ffmpeg_bin: str) -> bool:
@@ -211,12 +370,12 @@ def render_contact_sheet(video_path: Path, dur: float, cells: int, cell_w: int, 
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Programmatic final-video technical QA & review sheet generator.")
+    ap = argparse.ArgumentParser(description="Programmatic final-video technical & motion-dynamics QA (v6).")
     ap.add_argument("video", help="Path to rendered .mp4")
     ap.add_argument("--expect-size", help="Expected WxH, e.g. 1080x1920 or 1920x1080")
     ap.add_argument("--expect-fps", type=float, help="Expected FPS, e.g. 60")
     ap.add_argument("--expect-duration", type=float, help="Expected duration in seconds")
-    ap.add_argument("--scenes-json", help="Path to src/data/scenesData.json (auto-derives expected frames/duration & intentional holds)")
+    ap.add_argument("--scenes-json", help="Path to src/data/scenesData.json (enables duration sync & per-scene motion_dynamics check)")
     ap.add_argument("--lufs-target", type=float, default=-14.0, help="Target integrated loudness (default -14.0 LUFS, +-1.5 tolerance)")
     ap.add_argument("--out-dir", help="Directory for qa_report.json / qa_sheet.png / qa_phone.png (default <video_dir>/qa)")
     ap.add_argument("--ffmpeg-dir", help="Optional directory containing ffmpeg/ffprobe binaries")
@@ -233,7 +392,9 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     media = probe_media(video_path, ffprobe_bin)
-    scenes_dur, scenes_frames, holds = load_intended_holds(Path(args.scenes_json).expanduser().resolve() if args.scenes_json else None)
+    scenes_dur, scenes_frames, holds, scenes_list = load_scenes_meta(
+        Path(args.scenes_json).expanduser().resolve() if args.scenes_json else None
+    )
     exp_dur = args.expect_duration if args.expect_duration is not None else scenes_dur
 
     checks: dict[str, dict] = {}
@@ -277,7 +438,6 @@ def main() -> int:
 
     if not media["has_audio"] or media["audio_channels"] < 2:
         checks["audio_loudness"] = {"status": "FAIL", "actual": f"has_audio={media['has_audio']}, channels={media['audio_channels']}"}
-        loud = None
     else:
         loud = measure_loudness(video_path, ffmpeg_bin)
         i_ok = abs(loud["integrated_lufs"] - args.lufs_target) <= 1.5
@@ -293,6 +453,21 @@ def main() -> int:
         "status": "PASS" if len(vis["black_segments"]) == 0 else "FAIL",
         "segments": vis["black_segments"],
     }
+
+    if scenes_list:
+        motion = analyse_motion_dynamics(video_path, media, scenes_list, ffmpeg_bin)
+        checks["motion_dynamics"] = {
+            "status": motion["status"],
+            "failed_scenes": motion.get("failed_scenes", []),
+            "weak_motion_scenes": motion.get("weak_motion_scenes", []),
+            "scene_count": len(motion.get("scenes", [])),
+        }
+    else:
+        motion = None
+        checks["motion_dynamics"] = {
+            "status": "NOT_CHECKED",
+            "note": "未传 --scenes-json，跳过分幕动效帧差曲线硬检",
+        }
 
     intended_freezes, unexplained_freezes = [], []
     for f0, f1 in vis["freeze_segments"]:
@@ -314,6 +489,7 @@ def main() -> int:
         "overall": overall,
         "media": media,
         "checks": checks,
+        "motion_dynamics": motion,
         "review_cues": {
             "unexplained_freezes_sec": unexplained_freezes,
             "intended_holds_sec": intended_freezes,
@@ -325,14 +501,25 @@ def main() -> int:
     report_path = out_dir / "qa_report.json"
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"=== 成片程序化终检报告 [{overall}] ===")
+    print(f"=== 成片程序化与动效终检报告 v6 [{overall}] ===")
     for name, detail in checks.items():
         print(f"  [{detail['status']:11s}] {name}: {json.dumps({k: v for k, v in detail.items() if k != 'status'}, ensure_ascii=False)}")
+    if motion and motion.get("scenes"):
+        print("  [分幕动效曲线]")
+        for sc in motion["scenes"]:
+            if sc["status"] == "INTENDED_HOLD":
+                print(f"    {sc['id']} ({sc['duration_sec']}s): INTENDED_HOLD")
+            else:
+                print(
+                    f"    {sc['id']} ({sc['duration_sec']}s): active={sc['active_motion_sec']}s | "
+                    f"peaks={sc['motion_peaks']} | spatial_span={sc['spatial_span']} | "
+                    f"area_growth={sc['area_growth']} -> {sc['status']}"
+                )
     print(f"  [审片线索] 未声明静止段={len(unexplained_freezes)} 处 | 刻意留白静止={len(intended_freezes)} 处 | 单帧突跳={len(vis['flash_spikes_sec'])} 处")
     if sheet_ok and phone_ok:
         print(f"  [抽帧总览] {sheet_path} | 手机尺寸图: {phone_path}")
     if unchecked:
-        print(f"  注意：存在未检查规格项 {unchecked}（不算全部通过，请补齐 --expect-size / --expect-fps / --scenes-json）。")
+        print(f"  注意：存在未检查规格项 {unchecked}（请补齐 --expect-size / --expect-fps / --scenes-json）。")
 
     return 1 if failed else (2 if unchecked else 0)
 
