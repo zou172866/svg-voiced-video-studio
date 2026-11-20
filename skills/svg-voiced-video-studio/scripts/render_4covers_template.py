@@ -123,10 +123,14 @@ def visual_em_width(s: str) -> float:
         if ord(ch) <= 0x7F:
             if ch == " ":
                 w += 0.30
+            elif ch == "%":
+                w += 0.92
+            elif ch.isdigit():
+                w += 0.65
             elif ch.isupper():
-                w += 0.66
+                w += 0.68
             else:
-                w += 0.54
+                w += 0.56
         elif ch in ("\u2009", "\u200A"):
             w += 0.16
         else:
@@ -573,14 +577,19 @@ def build_covers_from_spec(
             *(visual_em_width(pangu_space(strip_accent_markers(s))) for s in sub_raw),
         )
         # Giant hook (1.6x-2.0x scale) + crisp supporting sublines dynamically fitted per viewport
-        hook_v = min(116.0, 448.0 / hook_em)
-        sub_v = min(hook_v * 0.54, 448.0 / sub_max_em, 56.0)
+        # 9:16 uses 70px logical side padding (140px physical) to survive Douyin 19.5:9/20:9 full-screen crop (inner width=400px)
+        hook_v916 = min(96.0, 384.0 / hook_em)
+        sub_v916 = min(hook_v916 * 0.54, 388.0 / sub_max_em, 48.0)
 
-        hook_43 = min(98.0, 384.0 / hook_em)
-        sub_43 = min(hook_43 * 0.54, 384.0 / sub_max_em, 48.0)
+        # 3:4 uses 52px logical side padding (104px physical, inner width=436px)
+        hook_v34 = min(104.0, 412.0 / hook_em)
+        sub_v34 = min(hook_v34 * 0.54, 416.0 / sub_max_em, 52.0)
 
-        hook_169 = min(116.0, 476.0 / hook_em)
-        sub_169 = min(hook_169 * 0.54, 476.0 / sub_max_em, 54.0)
+        hook_43 = min(92.0, 356.0 / hook_em)
+        sub_43 = min(hook_43 * 0.54, 360.0 / sub_max_em, 46.0)
+
+        hook_169 = min(110.0, 456.0 / hook_em)
+        sub_169 = min(hook_169 * 0.54, 460.0 / sub_max_em, 52.0)
 
         headline_block = f'<div class="h1-voice hook-line">{hook_html}</div><div class="h1-voice sub-wrap">{sub_html}</div>'
     else:
@@ -596,8 +605,10 @@ def build_covers_from_spec(
         _audit_cover_red_focus(accented_all)
         max_line_em = max(visual_em_width(pangu_space(strip_accent_markers(str(ln).strip()))) for ln in lines)
         line_scale = 0.86 if len(lines) == 4 else 1.0
-        hook_v = min(68.0 * line_scale, 444.0 / max(1.0, max_line_em))
-        sub_v = hook_v * 0.6
+        hook_v916 = min(62.0 * line_scale, 392.0 / max(1.0, max_line_em))
+        sub_v916 = hook_v916 * 0.6
+        hook_v34 = min(66.0 * line_scale, 424.0 / max(1.0, max_line_em))
+        sub_v34 = hook_v34 * 0.6
         hook_43 = min(60.0 * line_scale, 372.0 / max(1.0, max_line_em))
         sub_43 = hook_43 * 0.6
         hook_169 = min(72.0 * line_scale, 468.0 / max(1.0, max_line_em))
@@ -622,15 +633,19 @@ def build_covers_from_spec(
     rt_em = max(visual_em_width(pangu_space(str(right_box.get("title", "")))), 1.0)
     max_ct_em = max(lt_em, rt_em)
 
-    ct_v = min(30.0, max(16.0, 186.0 / max_ct_em))
-    ct_v_wrap = "normal" if (max_ct_em * ct_v > 190.0) else "nowrap"
+    ct_v916 = min(27.0, max(15.0, 166.0 / max_ct_em))
+    ct_v916_wrap = "normal" if (max_ct_em * ct_v916 > 170.0) else "nowrap"
+    ct_v34 = min(29.0, max(16.0, 180.0 / max_ct_em))
+    ct_v34_wrap = "normal" if (max_ct_em * ct_v34 > 184.0) else "nowrap"
     ct_43 = min(30.0, max(16.0, 200.0 / max_ct_em))
     ct_43_wrap = "normal" if (max_ct_em * ct_43 > 204.0) else "nowrap"
     ct_169 = min(34.0, max(18.0, 290.0 / max_ct_em))
     ct_169_wrap = "normal" if (max_ct_em * ct_169 > 294.0) else "nowrap"
 
-    mon_v = min(44.0, max(22.0, 380.0 / lt_em))
-    mon_v_wrap = "normal" if (lt_em * mon_v > 384.0) else "nowrap"
+    mon_v916 = min(40.0, max(20.0, 340.0 / lt_em))
+    mon_v916_wrap = "normal" if (lt_em * mon_v916 > 344.0) else "nowrap"
+    mon_v34 = min(42.0, max(22.0, 368.0 / lt_em))
+    mon_v34_wrap = "normal" if (lt_em * mon_v34 > 372.0) else "nowrap"
     mon_43 = min(36.0, max(18.0, 180.0 / lt_em))
     mon_43_wrap = "normal" if (lt_em * mon_43 > 184.0) else "nowrap"
     mon_169 = min(44.0, max(20.0, 276.0 / lt_em))
@@ -688,21 +703,21 @@ def build_covers_from_spec(
     with tempfile.TemporaryDirectory(prefix="svg_covers_") as tmp:
         wdir = Path(tmp)
 
-        # 1) 9:16 (1080x1920): 136px logical padding = 272px physical (>=240px top/bottom central 3:4 safe zone)
+        # 1) 9:16 (1080x1920): 140px logical top/bottom (=280px physical central 3:4 safe zone)
+        #    and 70px logical left/right (=140px physical) to survive Douyin 19.5:9 / 20:9 full-screen crop
         html_9x16 = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>
 {css}
 {shared_strip_css}
-body {{ width:540px; height:960px; padding:136px 42px; }}
+body {{ width:540px; height:960px; padding:140px 70px; }}
 .safe {{ width:100%; height:100%; display:flex; flex-direction:column; justify-content:space-between; position:relative; z-index:2; }}
 .hero {{ display:flex; flex-direction:column; justify-content:center; flex:1; padding:14px 0 22px 0; }}
-.hook-line {{ font-size:{hook_v:.1f}px; white-space:nowrap; }}
-.subline {{ font-size:{sub_v:.1f}px; line-height:1.18; font-weight:{"800" if resolved_style=="grotesk" else "600"}; white-space:nowrap; }}
-.ct {{ font-size:{ct_v:.1f}px; font-weight:900; line-height:1.14; margin:2px 0 2px; white-space:{ct_v_wrap}; overflow-wrap:break-word; text-wrap:balance; letter-spacing:-0.015em; }}
-.mon-val {{ font-size:{mon_v:.1f}px; white-space:{mon_v_wrap}; }}
-.cs {{ font-size:13.5px; line-height:1.4; color:{t['muted']}; font-weight:500; text-wrap:balance; }}
+.hook-line {{ font-size:{hook_v916:.1f}px; white-space:nowrap; }}
+.subline {{ font-size:{sub_v916:.1f}px; line-height:1.18; font-weight:{"800" if resolved_style=="grotesk" else "600"}; white-space:nowrap; }}
+.ct {{ font-size:{ct_v916:.1f}px; font-weight:900; line-height:1.14; margin:2px 0 2px; white-space:{ct_v916_wrap}; overflow-wrap:break-word; text-wrap:balance; letter-spacing:-0.015em; }}
+.mon-val {{ font-size:{mon_v916:.1f}px; white-space:{mon_v916_wrap}; }}
+.cs {{ font-size:13px; line-height:1.4; color:{t['muted']}; font-weight:500; text-wrap:balance; }}
 </style></head><body>
 {grain_svg}
-<div class="safe-ticks"><div class="tick tl"></div><div class="tick tr"></div><div class="tick bl"></div><div class="tick br"></div></div>
 <div class="safe">
   {eyebrow_html}
   <div class="hero">{headline_block}</div>
@@ -711,11 +726,25 @@ body {{ width:540px; height:960px; padding:136px 42px; }}
         p1 = render_one(browser, html_9x16, out_dir / "封面_竖屏9比16_抖音视频号版.png", 540, 960, wdir, "c9x16")
         rendered.append(("9:16", p1))
 
-        # 2) 3:4 (1080x1440): Xiaohongshu / Kuaishou dual-column / WeChat Channels
-        html_3x4 = html_9x16.replace("height:960px; padding:136px 42px;", "height:720px; padding:44px 42px 42px 42px;").replace(
-            '<div class="safe-ticks"><div class="tick tl"></div><div class="tick tr"></div><div class="tick bl"></div><div class="tick br"></div></div>',
-            "",
-        )
+        # 2) 3:4 (1080x1440): Xiaohongshu / Kuaishou dual-column / WeChat Channels (52px logical = 104px physical side border)
+        html_3x4 = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>
+{css}
+{shared_strip_css}
+body {{ width:540px; height:720px; padding:48px 52px 46px 52px; }}
+.safe {{ width:100%; height:100%; display:flex; flex-direction:column; justify-content:space-between; position:relative; z-index:2; }}
+.hero {{ display:flex; flex-direction:column; justify-content:center; flex:1; padding:14px 0 22px 0; }}
+.hook-line {{ font-size:{hook_v34:.1f}px; white-space:nowrap; }}
+.subline {{ font-size:{sub_v34:.1f}px; line-height:1.18; font-weight:{"800" if resolved_style=="grotesk" else "600"}; white-space:nowrap; }}
+.ct {{ font-size:{ct_v34:.1f}px; font-weight:900; line-height:1.14; margin:2px 0 2px; white-space:{ct_v34_wrap}; overflow-wrap:break-word; text-wrap:balance; letter-spacing:-0.015em; }}
+.mon-val {{ font-size:{mon_v34:.1f}px; white-space:{mon_v34_wrap}; }}
+.cs {{ font-size:13.5px; line-height:1.4; color:{t['muted']}; font-weight:500; text-wrap:balance; }}
+</style></head><body>
+{grain_svg}
+<div class="safe">
+  {eyebrow_html}
+  <div class="hero">{headline_block}</div>
+  {info_v}
+</div></body></html>"""
         p2 = render_one(browser, html_3x4, out_dir / "封面_信息流3比4_小红书视频号版.png", 540, 720, wdir, "c3x4")
         rendered.append(("3:4", p2))
 

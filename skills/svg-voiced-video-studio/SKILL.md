@@ -13,8 +13,8 @@ description: 将口播稿、分镜脚本或选题按信息点动态分幕，制�
 
 1. **先体检稿件与配音环境，再拆句缓存合成与纸墨拟音混音。** 依据：汉语双音节韵律词、Grice 会话准则与视听材质一致性。合成前必跑 [lint_script.py](scripts/lint_script.py) 清查书面公文单字、二元反转、五类口播 AI 指纹与多音字读法（读错词用 `{念法=>字幕}` 双轨锁定）；[synth_voiceover_template.py](scripts/synth_voiceover_template.py) 支持 `--check-only`、`out/.tts_cache/` 续合、`--asr-verify` 与纸墨物理建模拟音（[sfx_synth.py](scripts/sfx_synth.py)：`page_turn` 翻纸、`stamp_thud` 盖章闷响、`pen_stroke` 笔尖划纸、`ruler_drop` 尺子落桌、`ledger_tick` 刻度轻叩，支持 `assets/sfx/<kind>.wav` 优先覆盖）。工艺参数见 [口播人话与防切尾音工艺手册](references/kaikou-voice-and-script-craft.md)。
 2. **实测秒数驱动 `60fps` 贯通画布，动作改变空间且快离场。** 依据：归一化时间参数化与视听同步感知窗。组件严禁写死帧号；模式 C 保持纯宣纸左/顶极简留白（无左侧竖线、无字幕左竖杠、无顶部进度条），以 `disableMasterFade` 推镜/匹配剪辑连贯衔接不清场，核心数字落定盖一枚朱砂方印（`<EditorialSealStamp>`）；每幕至少 1 个结构性空间主动作（推镜、纸面擦除、柱条生长、墨线划断、路由分流），禁用纯透明度淡入 PPT；模式 C 锁零回弹弹簧 `hero / swissSnap`，离场 `0.25s`，中文画面字停满 `minReadHoldSec()`。
-3. **巨尺主角、留白成块、纸面排印与硬门禁构图轮换。** 依据：瑞士国际主义尺幅对比与格式塔图底分离。竖屏 G1 巨数达 `320～480px`，主角高度 `≥ 40%`；图形与 `54px` 跟声标红字幕下沉贴近成组（间距 `≤ 72px`），整块留白推向画幅上方或右侧；严禁大黑底终端卡片（改用 `<PaperCommandLine>` 排在纸面上）与大面积红底白字按钮（红只用于字、≤3px 细线或紧凑方印）；全片至少 `1` 幕 G1 + `1` 幕 G3/G4，相邻幕 Dice 超限直接判 `FAIL`。
-4. **四尺寸封面用层级主标与开放双栏，封面与正片同字体零制作参数。** 依据：180px 缩略图信息层级与品牌一致性。主标采用「`1` 个超大钩子（数字/专名，朱砂红只给信息不给口号）+ `1～2` 行中号说明」，双栏数据仅用 1 根细线隔开（零外框、零实心底），彻底删除 `4K 60FPS / 01:25` 制作参数与英文装饰页眉；模式 C 全程统一 `Source Han Sans CN Heavy`，模式 A/B 统一衬线且混排拉丁锁零字距；`9:16` 严锁中央 `3:4` 安全区（上下留白 `≥ 240px`）。细则见 [五平台文案与四尺寸封面规范](references/five-platform-copy-and-cover-spec.md)。
+3. **巨尺主角、留白成块、抗抖音全面屏裁切留边与硬门禁构图轮换。** 依据：瑞士国际主义尺幅对比与 `19.5:9 / 20:9` 全面屏全出血裁切几何。竖屏 G1 巨数按安全宽度自适应（最高 `414～460px`），主角高度 `≥ 40%`；**内容与 `48px` 跟声标红字幕严锁 `left=140 / right=200`（`x=140..880`，宽 `740px`）**，确保抖音全面屏左右各裁切 `~100px` 后四周仍有干净宣纸边框且不撞右侧图标；图形与字幕下沉贴近成组（间距 `≤ 72px`），整块留白推向画幅上方；严禁大黑底终端卡片（改用 `<PaperCommandLine>`）与大面积红底白字按钮；全片至少 `1` 幕 G1 + `1` 幕 G3/G4，相邻幕 Dice 超限直接判 `FAIL`。
+4. **四尺寸封面用层级主标与开放双栏，封面与正片同字体零制作参数。** 依据：180px 缩略图信息层级与品牌一致性。主标采用「`1` 个超大钩子（数字/专名，朱砂红只给信息不给口号）+ `1～2` 行中号说明」，双栏数据仅用 1 根细线隔开（零外框、零实心底），彻底删除 `4K 60FPS / 01:25` 制作参数与英文装饰页眉；模式 C 全程统一 `Source Han Sans CN Heavy`，模式 A/B 统一衬线且混排拉丁锁零字距；`9:16` 严锁中央 `3:4` 与抖音防裁切安全区（上下留白 `280px`、左右留白 `140px`）。细则见 [五平台文案与四尺寸封面规范](references/five-platform-copy-and-cover-spec.md)。
 5. **发布文案守住语言与事实边界，哲思片保留专属结束语。** 纯文字零格式、去引号、快手最多 `4` 个话题、禁用二元反转与假设变事实；哲思人文片终幕原字保留「以不休止的追问，找到鲜活的自我；在有限的共识里，达成无限的可能。」（分号拆两句合成，句末留白 `4.5s～5.5s`）。
 6. **分幕随信息点动态伸缩，严禁凑固定幕数。** 按「一幕只立一个核心信息点」自然切分（短快评 `3～5` 幕、常规拆解 `5～9` 幕、深度长片 `10～16+` 幕），数据口径严守零起点与统计诚实度。
 7. **两段式动效与静态审美硬检 + 正反参考板独立盲审双过关才交付。** 依据：缺陷前移与客观对照防确认偏误。编码前跑 [audit_aesthetics.py](scripts/audit_aesthetics.py) 查静态 10 项像素 + 7 项源码（含纯淡入告警与 G1/G3-G4 配额）；1K 样片渲染后跑 [inspect_video.py](scripts/inspect_video.py) 核查 6 项硬指标 + 第 7 项 `motion_dynamics`（每幕 `10fps` 帧差与结构位移峰值曲线，零主动作 `FAIL`），再由不看代码的独立盲审子 Agent 对照 `assets/reference_board_good.png` 与 `assets/reference_board_bad.png` 逐条验真。
@@ -46,13 +46,13 @@ description: 将口播稿、分镜脚本或选题按信息点动态分幕，制�
 ### 第 2 步：搭建贯通式 Remotion `60fps` 原生 SVG 工程
 1. 有可复用 `node_modules` 时用 Windows Junction 挂载；复制 [motion_60fps.ts](assets/motion_60fps.ts)、[SceneFrameShell_60fps.tsx](assets/SceneFrameShell_60fps.tsx) 与 [SwissSvgPrimitives.tsx](assets/SwissSvgPrimitives.tsx)。
 2. 合成 ID：整片 `MainEssay`，分幕 `Scene-S01`…`Scene-SXX`；总母带只在 `MainEssay` 挂一次；模式 C 保持纯宣纸极简画幅（无左侧竖线、无字幕左竖杠、无顶部章节进度条与一切英文装饰页眉/制作参数）。
-3. 优先复用 G1～G6 原语（`MonumentMetric` / `AsymmetricSplit` / `FlowRouter` / `SwissBarAxis` / `EditorialStrikeReveal` / `SilentEpigraph`）与纸面扩展原语（`PaperCommandLine` / `EditorialSealStamp` / `SingleCanvasAct` / `MixedSerifText`），竖屏默认下沉贴近 `54px` 跟声标红字幕（`bottomAnchorY()`），全片保证 `≥ 1` 幕 G1 + `≥ 1` 幕 G3/G4 且每幕至少 1 个空间主动作。
+3. 优先复用 G1～G6 原语（`MonumentMetric` / `AsymmetricSplit` / `FlowRouter` / `SwissBarAxis` / `EditorialStrikeReveal` / `SilentEpigraph`）与纸面扩展原语（`PaperCommandLine` / `EditorialSealStamp` / `SingleCanvasAct` / `MixedSerifText`），竖屏所有内容严格落在 `safe.left..safe.right`（`x=140..880`，宽 `740px`，推镜 `zoom ≤ 1.02` 以画布中心 `cx=540` 为心防边缘偏移），下沉贴近 `48px` 跟声标红字幕（`bottomAnchorY()`），全片保证 `≥ 1` 幕 G1 + `≥ 1` 幕 G3/G4 且每幕至少 1 个空间主动作。
 
 ### 第 3 步：两段式动效与审美硬检 → 先出 `1K` 样片交审 → 确认后超采 `4K`
 1. `npx tsc --noEmit` 零报错。
 2. 运行 [extract_keyframes_template.mjs](scripts/extract_keyframes_template.mjs)（端口 `18123` 避 Hyper-V 保留段），再跑 [audit_aesthetics.py](scripts/audit_aesthetics.py)（`--theme` + `--src`）确认 10 项像素指标与 7 项源码规则无硬 `FAIL`、无纯淡入 PPT。
 3. **阶段 A（先出 `1K` 样片交审）**：`npx remotion render … --scale=1 --codec=h264 --crf=18 --pixel-format=yuv420p --port=18123`。
-4. 跑 [inspect_video.py](scripts/inspect_video.py)（传齐 `--expect-size`、`--expect-fps 60`、`--scenes-json`）确认 7 项硬检（含 `motion_dynamics` 帧差主动作曲线）全部 `PASS`；派**不看代码**的独立盲审子 Agent 拿 `qa_sheet.png`、`qa_phone.png`、封面 `180px` 检验表与 `assets/reference_board_good.png` / `reference_board_bad.png` 逐条盲审修净。
+4. 跑 [inspect_video.py](scripts/inspect_video.py)（传齐 `--expect-size`、`--expect-fps 60`、`--scenes-json`）确认 7 项硬检（含 `motion_dynamics` 帧差主动作曲线）全部 `PASS`，并自动产出 `qa_douyin_preview.png`（真机 `19.5:9` 全屏裁切与按钮叠加模拟）；派**不看代码**的独立盲审子 Agent 拿 `qa_sheet.png`、`qa_phone.png`、`qa_douyin_preview.png`、封面 `180px` 检验表与 `assets/reference_board_good.png` / `reference_board_bad.png` 逐条盲审修净。
 5. 完成第 4～5 步后把 **1K 样片 + 四尺寸封面 + 发布文案** 交用户审阅并**停下等待确认**；任何返修全程在 `--scale=1` 极速完成。
 6. **阶段 B（用户确认后超采真 `4K` 终版）**：零改代码执行 `--scale=2 --codec=h264 --crf=16 --pixel-format=yuv420p --port=18123`（仅允许整数/半整数合法倍率 `2` 或 `1.5`），复跑 `inspect_video.py --expect-size 2160x3840`［横屏 `3840x2160`］终检全 `PASS`。
 

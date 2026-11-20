@@ -180,8 +180,8 @@ def analyse_motion_dynamics(
     w_src, h_src = media["width"], media["height"]
     is_portrait = h_src > w_src
     if is_portrait:
-        cx, cy = int(w_src * 48 / 1080), int(h_src * 266 / 1920)
-        cw, ch = int(w_src * 892 / 1080), int(h_src * 1064 / 1920)
+        cx, cy = int(w_src * 124 / 1080), int(h_src * 280 / 1920)
+        cw, ch = int(w_src * 776 / 1080), int(h_src * 1040 / 1920)
         sw, sh = 144, 180
     else:
         cx, cy = 0, int(h_src * 140 / 1080)
@@ -369,6 +369,91 @@ def render_contact_sheet(video_path: Path, dur: float, cells: int, cell_w: int, 
     return r.returncode == 0 and out_png.is_file() and out_png.stat().st_size > 0
 
 
+def render_douyin_crop_preview(
+    video_path: Path,
+    dur: float,
+    w_src: int,
+    h_src: int,
+    out_png: Path,
+    ffmpeg_bin: str,
+) -> bool:
+    """
+    Simulate real Douyin iPhone 19.5:9 full-screen cover-crop (crops 97px left/right on 1080w)
+    with translucent right-side icon column, bottom caption chrome, and 20:9 dashed edge guides.
+    """
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return False
+
+    # Crop 1080x1920 -> 886x1920 (exact 19.5:9 cover crop centered), tile 4x3 at cell_w=220
+    crop_w = int(round(w_src * 886 / 1080))
+    crop_x = (w_src - crop_w) // 2
+    cell_w = 220
+    cell_h = int(round(cell_w * h_src / max(1, crop_w)))
+    if cell_h % 2:
+        cell_h += 1
+    cols, rows = 4, 3
+    cells = cols * rows
+    pad = 8
+    rate = max(0.05, cells / max(0.5, dur))
+
+    tmp_strip = out_png.with_suffix(".tmp_dy.png")
+    vf = (
+        f"fps={rate:.5f},crop={crop_w}:{h_src}:{crop_x}:0,"
+        f"scale={cell_w}:{cell_h}:flags=lanczos,tile={cols}x{rows}:padding={pad}:color=0x1A1A18"
+    )
+    tmp_strip.unlink(missing_ok=True)
+    r = subprocess.run(
+        [ffmpeg_bin, "-hide_banner", "-v", "error", "-y", "-i", str(video_path), "-vf", vf, "-frames:v", "1", str(tmp_strip)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0 or not tmp_strip.is_file():
+        return False
+
+    base = Image.open(tmp_strip).convert("RGBA")
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    # Extra 20:9 side-crop inward offset inside the 19.5:9 frame: (108 - 97) / 886
+    dx20 = max(2, int(round(cell_w * 11 / 886)))
+    top_h = int(round(cell_h * 240 / 1920))
+    bot_y = int(round(cell_h * 1500 / 1920))
+    icon_x = int(round(cell_w * (886 - 58) / 886))
+    icon_r = max(7, int(round(cell_w * 28 / 886)))
+
+    for idx in range(cells):
+        rc, cc = divmod(idx, cols)
+        x0 = cc * (cell_w + pad)
+        y0 = rc * (cell_h + pad)
+        if x0 + cell_w > base.width or y0 + cell_h > base.height:
+            continue
+        # Top Douyin status/tab bar haze
+        draw.rectangle([x0, y0, x0 + cell_w, y0 + top_h], fill=(26, 26, 24, 34))
+        # Bottom Douyin username/caption/nav haze
+        draw.rectangle([x0, y0 + bot_y, x0 + cell_w, y0 + cell_h], fill=(26, 26, 24, 58))
+        # Simulated caption bars on bottom-left
+        draw.rectangle([x0 + 12, y0 + bot_y + 14, x0 + int(cell_w * 0.56), y0 + bot_y + 22], fill=(255, 255, 255, 130))
+        draw.rectangle([x0 + 12, y0 + bot_y + 28, x0 + int(cell_w * 0.72), y0 + bot_y + 34], fill=(255, 255, 255, 100))
+        # Right-side Douyin interactive column (avatar / like / comment / star / share / disc)
+        for frac_y in (0.48, 0.57, 0.65, 0.73, 0.81, 0.90):
+            cy = y0 + int(round(cell_h * frac_y))
+            cx = x0 + icon_x
+            draw.ellipse([cx - icon_r, cy - icon_r, cx + icon_r, cy + icon_r], fill=(26, 26, 24, 82), outline=(255, 255, 255, 140), width=1)
+        # Subtle dashed 20:9 extreme side-crop guide lines
+        for yy in range(y0 + top_h, y0 + bot_y, 10):
+            draw.line([(x0 + dx20, yy), (x0 + dx20, min(y0 + bot_y, yy + 5))], fill=(217, 59, 34, 120), width=1)
+            draw.line([(x0 + cell_w - dx20, yy), (x0 + cell_w - dx20, min(y0 + bot_y, yy + 5))], fill=(217, 59, 34, 120), width=1)
+
+    merged = Image.alpha_composite(base, overlay).convert("RGB")
+    out_png.unlink(missing_ok=True)
+    merged.save(out_png, format="PNG", optimize=True)
+    tmp_strip.unlink(missing_ok=True)
+    return out_png.is_file() and out_png.stat().st_size > 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Programmatic final-video technical & motion-dynamics QA (v6).")
     ap.add_argument("video", help="Path to rendered .mp4")
@@ -476,9 +561,15 @@ def main() -> int:
 
     sheet_path = out_dir / "qa_sheet.png"
     phone_path = out_dir / "qa_phone.png"
+    douyin_path = out_dir / "qa_douyin_preview.png"
     is_portrait = media["height"] > media["width"]
     sheet_ok = render_contact_sheet(video_path, media["duration"], 24, 240 if is_portrait else 320, sheet_path, ffmpeg_bin)
     phone_ok = render_contact_sheet(video_path, media["duration"], 12, 180 if is_portrait else 320, phone_path, ffmpeg_bin)
+    douyin_ok = (
+        render_douyin_crop_preview(video_path, media["duration"], media["width"], media["height"], douyin_path, ffmpeg_bin)
+        if is_portrait
+        else False
+    )
 
     failed = [k for k, v in checks.items() if v["status"] == "FAIL"]
     unchecked = [k for k, v in checks.items() if v["status"] == "NOT_CHECKED"]
@@ -496,6 +587,7 @@ def main() -> int:
             "flash_spikes_sec": vis["flash_spikes_sec"],
             "qa_sheet": str(sheet_path) if sheet_ok else None,
             "qa_phone": str(phone_path) if phone_ok else None,
+            "qa_douyin_preview": str(douyin_path) if douyin_ok else None,
         },
     }
     report_path = out_dir / "qa_report.json"
@@ -517,7 +609,8 @@ def main() -> int:
                 )
     print(f"  [审片线索] 未声明静止段={len(unexplained_freezes)} 处 | 刻意留白静止={len(intended_freezes)} 处 | 单帧突跳={len(vis['flash_spikes_sec'])} 处")
     if sheet_ok and phone_ok:
-        print(f"  [抽帧总览] {sheet_path} | 手机尺寸图: {phone_path}")
+        extra = f" | 抖音19.5:9真机裁切预览: {douyin_path}" if douyin_ok else ""
+        print(f"  [抽帧总览] {sheet_path} | 手机尺寸图: {phone_path}{extra}")
     if unchecked:
         print(f"  注意：存在未检查规格项 {unchecked}（请补齐 --expect-size / --expect-fps / --scenes-json）。")
 

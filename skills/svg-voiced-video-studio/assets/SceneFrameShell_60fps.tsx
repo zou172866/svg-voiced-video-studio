@@ -243,22 +243,24 @@ const SAFE_DEFAULTS = {
     graphicsBottomGap: 232,
   },
   /**
-   * Portrait 9:16 (1080x1920) v6 calibrated for ultra-clean Swiss editorial grouping:
-   * - Clean pure-paper margins on left (left=72) and top (NO top progress bar / chapter strip, clearing top 200px UI)
-   * - Graphics safe band: y=266..1330 (height=1064) -> graphics bottom-anchor right above subtitle (gap <= 72px)
-   * - Subtitle rail: 54px large legible pure-text type at bottom=412 (y ~ 1352..1508, clears bottom 400px platform chrome)
-   * - Right margin=140px clears right-edge like/comment/share icon column (all content strictly x <= 940)
+   * Portrait 9:16 (1080x1920) v6.1 Douyin 19.5:9 / 20:9 anti-crop Swiss editorial safe box:
+   * - Full-bleed phones (19.5:9 iPhone / 20:9 Android) crop 97..108px off left & right edges on Douyin;
+   *   left=140 guarantees 32..43px clean paper border inside physical glass bezel even after crop!
+   * - right=200 (content strictly x=140..880, width=740) clears 97px right crop + Douyin right icon column.
+   * - Top y=0..280 pure open paper (NO top progress bar / chapter strip; clears top 260px status & tabs).
+   * - Graphics safe band: y=280..1320 (height=1040) -> bottom-anchored right above subtitle (gap <= 72px).
+   * - Subtitle rail: 48px legible pure-text type at bottom=420 (y ~ 1360..1500, clears bottom 420px UI).
    */
   portrait: {
-    left: 72,
-    right: 140,
+    left: 140,
+    right: 200,
     top: 204,
     headerSize: 30,
-    subtitleBottom: 412,
-    subtitleSize: 54,
+    subtitleBottom: 420,
+    subtitleSize: 48,
     wrapUnits: 12.6,
-    graphicsTop: 266,
-    graphicsBottomGap: 590,
+    graphicsTop: 280,
+    graphicsBottomGap: 600,
   },
 };
 
@@ -341,6 +343,7 @@ const PROTECTED_BIGRAMS = new Set([
   '指令', '路由', '智能', '调用', '开启', '会员', '功能', '方案', '细节', '末尾',
   '输入', '输出', '手动', '实现', '报错', '到底', '跑到', '生效', '回本', '安装',
   '运行', '发送', '识别', '验证', '推演', '追问', '项目', '终端', '仓库', '聊天',
+  '反重', '重力', '缓存', '解决', '冲上', '插件', '规则', '对话', '重启', '自带', '依赖', '原生',
 ]);
 
 function splitBalancedTwoLines(
@@ -614,7 +617,7 @@ export const SceneFrameShell: React.FC<SceneFrameShellProps> = ({
   const subRight = marginRight;
   const hasSubBg = Boolean(theme.subtitleBg && theme.subtitleBg !== 'transparent');
   const availSubWidth = width - marginLeft - subRight - (hasSubBg ? 44 : 8);
-  const minPortraitSub = 46;
+  const minPortraitSub = 40;
   const computedSubSize =
     longestUnits > 0
       ? Math.min(sd.subtitleSize, Math.max(isPortrait ? minPortraitSub : 26, Math.floor(availSubWidth / (longestUnits * 1.03))))

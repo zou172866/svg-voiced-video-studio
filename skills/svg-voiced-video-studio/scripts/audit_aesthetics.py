@@ -10,6 +10,7 @@ Hard FAIL checks (exit code 1 unconditionally):
   4. adjacent rotation - 24x24 silhouette Dice >=0.72 on any adjacent pair, or >=2 pairs >=0.65 (no repeated skeleton)
   5. hero scale        - non-empty scene hero vertical extent < 40% of content band (raised from 25% -> 40%)
   6. film archetypes   - (--src with >=4 scenes) must contain >=1 G1 Monument AND >=1 G3/G4 real diagram
+  7. portrait margins  - (9:16) ink intruding into Douyin 19.5:9/20:9 side crop & icon zones (x<116 or x>912)
 
 Advisory WARN checks (exit code 1 with --strict):
   7. elements          - >8 separate visual elements
@@ -99,9 +100,9 @@ def relative_luminance(rgb: np.ndarray) -> float:
 
 def content_band(h: int, w: int) -> tuple[slice, slice]:
     if h > w:
-        # 9:16 portrait v6: pure-paper left/top margins (excludes outer left bleed x<48, top platform UI y<266,
-        # bottom 54px subtitle rail y>=1330, and right platform UI column x>940)
-        return slice(int(h * 266 / 1920), int(h * 1330 / 1920)), slice(int(w * 48 / 1080), int(w * 940 / 1080))
+        # 9:16 portrait v6.1: Douyin 19.5:9/20:9 anti-crop safe box (safe.left=140, safe.right=200 -> x=140..880;
+        # crop band x=124..900, y=280..1320 excludes top 260px UI, bottom 48px subtitle rail, and right icon column)
+        return slice(int(h * 280 / 1920), int(h * 1320 / 1920)), slice(int(w * 124 / 1080), int(w * 900 / 1080))
     # 16:9 landscape: excludes top header & bottom subtitle/footer
     return slice(int(h * 140 / 1080), int(h * 0.76)), slice(0, int(w * 0.96))
 
@@ -234,7 +235,7 @@ def analyse(png: Path, bg: np.ndarray, accent: np.ndarray, is_light_bg: bool) ->
     # 1. Accent blobs: horizontal-aware merge (rx=34 keeps spaced 150px+ mixed headlines like "1 个 Skill" as 1 focus)
     lab, n = ndimage.label(dilate_rect(acc, int(round(16 * scale)), int(round(34 * scale))))
     acc_sizes = ndimage.sum(acc, lab, range(1, n + 1)) if n else np.array([])
-    accent_blobs = int(np.sum(acc_sizes >= 260 * scale * scale))
+    accent_blobs = int(np.sum(acc_sizes >= 360 * scale * scale))
 
     # 1b. Solid red CTA buttons
     red_buttons = detect_red_buttons(acc, scale)
@@ -279,9 +280,9 @@ def analyse(png: Path, bg: np.ndarray, accent: np.ndarray, is_light_bg: bool) ->
     if len(body_rows) > 0:
         last_body_y_abs = ys.start + int(body_rows[-1])
         if portrait:
-            # Find actual top of subtitle band in y=1330..1620 (or fallback to 1360 if frame has no active subtitle)
-            sub_band_top = int(h * 1330 / 1920)
-            sub_band_bot = int(h * 1620 / 1920)
+            # Find actual top of subtitle band in y=1320..1600 (or fallback to 1360 if frame has no active subtitle)
+            sub_band_top = int(h * 1320 / 1920)
+            sub_band_bot = int(h * 1600 / 1920)
             sub_region = im[sub_band_top:sub_band_bot, xs]
             sub_ink = np.linalg.norm(sub_region - bg, axis=2) > 38.0
             sub_rows = np.where(np.mean(sub_ink, axis=1) >= 0.015)[0]
@@ -308,8 +309,21 @@ def analyse(png: Path, bg: np.ndarray, accent: np.ndarray, is_light_bg: bool) ->
         Image.fromarray((ink.astype(np.uint8) * 255)).resize((24, 24), Image.Resampling.BILINEAR)
     ) > 20
 
+    # 7. Portrait Douyin 19.5:9 / 20:9 full-screen side-margin intrusion check (graphics + subtitles y=240..1580)
+    left_bleed_px = 0
+    right_bleed_px = 0
+    if portrait:
+        by0, by1 = int(h * 240 / 1920), int(h * 1580 / 1920)
+        lx_end = int(w * 116 / 1080)
+        rx_start = int(w * 912 / 1080)
+        left_strip = im[by0:by1, :lx_end]
+        right_strip = im[by0:by1, rx_start:]
+        left_bleed_px = int(np.sum(np.linalg.norm(left_strip - bg, axis=2) > 38.0))
+        right_bleed_px = int(np.sum(np.linalg.norm(right_strip - bg, axis=2) > 38.0))
+
     return {
         "portrait": portrait,
+        "scale": scale,
         "accent_blobs": accent_blobs,
         "red_buttons": red_buttons,
         "elements": elements,
@@ -320,6 +334,8 @@ def analyse(png: Path, bg: np.ndarray, accent: np.ndarray, is_light_bg: bool) ->
         "v_center": v_center,
         "middle_hole": middle_hole,
         "neg_cohesion": neg_cohesion,
+        "left_bleed_px": left_bleed_px,
+        "right_bleed_px": right_bleed_px,
         "silhouette": sil,
     }
 
@@ -518,7 +534,7 @@ def main() -> int:
     accent = hex_rgb(a.accent or THEMES[a.theme]["accent"])
     is_light_bg = relative_luminance(bg) > 0.45
 
-    print("=== 关键帧审美与版式硬检 v6（已排除平台安全边与字幕带）===")
+    print("=== 关键帧审美与版式硬检 v6.1（含抖音 19.5:9/20:9 防裁切留边硬检）===")
     print("幕     红焦点 红按钮 元素 框线  主角高  墨覆  黑块  中洞  留白聚  邻似   结论")
     hard_fails: list[str] = []
     warns = 0
@@ -552,6 +568,11 @@ def main() -> int:
             scene_fails.append(f"主角过小({r['hero_h']:.0%}<40%)")
         if prev_sil is not None and adj_dice >= HARD_ADJACENT_DICE:
             scene_fails.append(f"与{prev_sid}撞骨架(Dice {adj_dice:.2f})")
+        bleed_thresh = int(round(120 * r["scale"] * r["scale"]))
+        if portrait and r["left_bleed_px"] >= bleed_thresh:
+            scene_fails.append("左贴边裁切(x<116)")
+        if portrait and r["right_bleed_px"] >= bleed_thresh:
+            scene_fails.append("右撞抖音图标(x>912)")
 
         # ADVISORY WARNS
         if r["elements"] > MAX_ELEMENTS:

@@ -262,11 +262,15 @@ export const MonumentMetric: React.FC<MonumentMetricProps> = ({
     : isPortrait
       ? 46
       : 32;
-  // v6: monumental Swiss scale — 320..460px on 1080px portrait canvas for massive visual contrast
-  const valMax = isPortrait ? 460 : 280;
+  // v6.1: monumental Swiss scale — scales proportionally inside 740..868px anti-crop safe width without right overflow
+  const valMax = isPortrait ? Math.min(460, Math.round(width * 0.56)) : 280;
   const valMin = isPortrait ? 120 : 72;
-  const valSize = fitFontSize(cleanVal, width * (cleanUnit ? 0.86 : 0.98), valMax, valMin, true);
-  const unitSize = cleanUnit ? Math.max(40, Math.round(valSize * 0.16)) : 0;
+  const valSize = fitFontSize(cleanVal, width * (cleanUnit ? 0.62 : 0.96), valMax, valMin, true);
+  const approxValW = Math.min(width * (cleanUnit ? 0.66 : 0.96), approxVisualUnits(cleanVal, true) * valSize * 0.96);
+  const unitAvailW = Math.max(120, width - approxValW - 18);
+  const unitSize = cleanUnit
+    ? fitFontSize(cleanUnit, unitAvailW, Math.max(40, Math.round(valSize * 0.16)), 32)
+    : 0;
 
   const kickerH = cleanKicker ? kickerSize * 1.45 : 0;
   const valH = valSize * 0.96;
@@ -289,7 +293,6 @@ export const MonumentMetric: React.FC<MonumentMetricProps> = ({
   const capY = ruleY + Math.round(ruleGap * 0.52) + captionSize * 0.88;
   const valColor = mixHex(theme.ink, theme.accent, accentStrength);
   const ruleStrong = theme.ruleStrong ?? theme.ink;
-  const approxValW = Math.min(width * 0.84, approxVisualUnits(cleanVal, true) * valSize * 0.98);
 
   return (
     <g>
@@ -1713,7 +1716,16 @@ export const PaperCommandLine: React.FC<PaperCommandLineProps> = ({
           Math.max(isPortrait ? 32 : 22, Math.min(isPortrait ? 46 : 32, availCmdW / (maxLineMonoU * 1.02))),
         );
         const promptOffset = hasPrompt ? Math.round(cmdFont * 0.88) : 0;
-        const labelFont = isPortrait ? 40 : 26;
+        const labelFont = cleanLabel
+          ? fitFontSize(cleanLabel, width, isPortrait ? 38 : 26, isPortrait ? 28 : 20)
+          : isPortrait
+            ? 38
+            : 26;
+        const noteFont = cleanNote
+          ? fitFontSize(cleanNote, width, isPortrait ? 38 : 26, isPortrait ? 28 : 20)
+          : isPortrait
+            ? 38
+            : 26;
         const cmdLineH = Math.round(cmdFont * 1.38);
         const firstCmdY = ry + (cleanLabel ? labelFont + 24 : 0) + cmdFont;
         const lastCmdY = firstCmdY + (rawLines.length - 1) * cmdLineH;
@@ -1794,9 +1806,9 @@ export const PaperCommandLine: React.FC<PaperCommandLineProps> = ({
             {cleanNote && (
               <text
                 x={x}
-                y={lastCmdY + 18 + (isPortrait ? 44 : 30)}
+                y={lastCmdY + 18 + (isPortrait ? 42 : 30)}
                 fontFamily={STUDIO_FONTS.sans}
-                fontSize={isPortrait ? 40 : 26}
+                fontSize={noteFont}
                 fontWeight={500}
                 fill={theme.muted}
                 opacity={p}
