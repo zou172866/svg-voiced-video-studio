@@ -1,5 +1,7 @@
 # svg-voiced-video-studio
 
+[![Clones](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zou172866/repo-traffic-archive/main/badges/svg-voiced-video-studio.json)](https://github.com/zou172866/repo-traffic-archive)
+
 将口播稿、分镜脚本或选题按信息点动态分幕，制作成带本地个人音色配音与纸墨拟音的 **4K 60fps** 杂志内页级原生几何 SVG 动态视频，并配套四尺寸开放式层级高清封面、同步 SRT 字幕与五平台（B站、小红书、抖音、视频号、快手）纯文字过检标题简介及置顶首评。
 
 ## 解决的问题与适用边界
